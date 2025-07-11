@@ -1,52 +1,57 @@
-# Travel Booking Terminal
+# Booking Agent Chatbot
 
-A terminal-based AI assistant for booking travel services such as flights, cabs, trains, and sleeper buses. Powered by Google Gemini (via LangChain) and FastAPI ecosystem tools.
+A conversational AI agent for booking flights, cabs, trains, and sleeper buses. The agent classifies user requests and routes them to the appropriate booking handler using a language model (Google Gemini via LangChain).
 
 ## Features
-- Classifies user requests as flight, cab, train, sleeper bus, or unknown
-- Simulates booking and provides confirmation for each type
-- Interactive terminal chat interface
-- Built with LangGraph, LangChain, and Google Generative AI
+- Classifies booking requests: flight, cab, train, sleeper bus, or unknown
+- Handles each booking type with a simulated confirmation
+- Interactive command-line chat interface
 
 ## Requirements
 - Python 3.8+
-- Google Generative AI API key (for Gemini)
+- Google API Key for Gemini (set as `GOOGLE_API_KEY` in a `.env` file)
 
-## Installation
-1. Clone this repository:
-   ```bash
-   git clone <repo-url>
-   cd <repo-folder>
-   ```
-2. Install dependencies:
+### Python Dependencies
+All dependencies are listed in `requirements.txt`:
+- langgraph
+- pydantic
+- langchain-google-genai
+- python-dotenv
+
+Install them with:
+```bash
+pip install -r requirements.txt
+```
+
+## Setup
+1. **Clone the repository**
+2. **Install dependencies:**
    ```bash
    pip install -r requirements.txt
    ```
-3. Set up your Google API key:
-   - Create a `.env` file in the project root with:
+3. **Set up your Google API Key:**
+   - Create a `.env` file in the project root:
      ```env
      GOOGLE_API_KEY=your_google_api_key_here
      ```
 
 ## Usage
-Run the chatbot in your terminal:
+Run the chatbot from the command line:
 ```bash
-python travel_booking_terminal.py
+python main.py
 ```
 Type your booking request (e.g., "Book a flight to Paris" or "I need a cab to the airport"). Type `exit` to quit.
 
-## Dependencies
-- fastapi
-- uvicorn
-- langgraph
-- requests
-- pydantic
-- langchain-google-community
-- langchain-google-genai
+## Example
+```
+Message: Book a train ticket to New York
+Assistant: Train ticket booked! Confirmation: TRAIN789
+```
 
-## Notes
-- This app simulates bookings and does not make real reservations.
-- Requires a valid Google Generative AI API key for operation.
+## Project Structure
+- `main.py` - Main chatbot logic and booking agent
+- `requirements.txt` - Python dependencies
+- `README.md` - Project documentation
 
 ## License
-MIT 
+MIT License
