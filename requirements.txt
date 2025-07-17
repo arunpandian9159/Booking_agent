@@ -1,0 +1,6 @@
+langgraph
+fastapi
+uvicorn
+google-cloud-aiplatform
+python-dotenv 
+supabase-py 
