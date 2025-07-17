@@ -23,7 +23,7 @@ This is a Booking Agent application for managing travel plans. The backend is im
 ### Installation
 1. Clone the repository:
    ```bash
-   git clone <repo-url>
+   git clone <https://github.com/arunpandian9159/Booking_agent>
    cd Booking_agent
    ```
 2. Install Python dependencies:
