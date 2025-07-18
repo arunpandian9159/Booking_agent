@@ -13,8 +13,8 @@
             margin: 0;
         }
         .container {
-            max-width: 420px;
-            margin: 3em auto;
+            max-width: 800px;
+            margin: 4em auto;
             background: #f7fcff;
             border-radius: 16px;
             box-shadow: 0 4px 24px rgba(0,0,0,0.08);
@@ -230,7 +230,7 @@
             .then(res => res.json())
             .then(data => {
                 if (data.result) {
-                    resultDiv.innerHTML = `<pre>${data.result}</pre>`;
+                    resultDiv.innerHTML = renderMarkdownTables(data.result);
                 } else if (data.error) {
                     resultDiv.innerHTML = `<span class='error'>${data.error}</span>`;
                 } else {
@@ -241,6 +241,36 @@
                 resultDiv.innerHTML = `<span class='error'>${err}</span>`;
             });
         });
+
+        // --- Markdown Table Parser and Renderer ---
+        function renderMarkdownTables(text) {
+            // Replace markdown tables with HTML tables
+            // Regex to match markdown tables
+            const tableRegex = /((?:^|\n)\|.+\|\n\|[-| ]+\|\n(?:\|.*\|\n?)+)/g;
+            let html = text;
+            html = html.replace(tableRegex, function(mdTable) {
+                const lines = mdTable.trim().split('\n');
+                if (lines.length < 2) return mdTable; // Not a valid table
+                // Remove separator line
+                const header = lines[0];
+                const separator = lines[1];
+                const rows = lines.slice(2);
+                const headers = header.split('|').map(h => h.trim()).filter(Boolean);
+                let table = '<table style="width:100%;margin:1em 0;border-collapse:collapse;">';
+                table += '<thead><tr>' + headers.map(h => `<th style="border:1px solid #b2dfdb;padding:6px;background:#e0f7fa;">${h}</th>`).join('') + '</tr></thead>';
+                table += '<tbody>';
+                rows.forEach(row => {
+                    const cells = row.split('|').map(c => c.trim()).filter(Boolean);
+                    if (cells.length) {
+                        table += '<tr>' + cells.map(c => `<td style="border:1px solid #b2dfdb;padding:6px;">${c}</td>`).join('') + '</tr>';
+                    }
+                });
+                table += '</tbody></table>';
+                return table;
+            });
+            // Preserve other line breaks
+            return `<div style="white-space:pre-line;">${html}</div>`;
+        }
     </script>
 </body>
 </html> 
