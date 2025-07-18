@@ -701,12 +701,16 @@ def get_hotel_id_to_name_mapping():
         return _hotel_id_to_name_cache
     token = get_tripxplo_token()
     try:
+        params = {"limit": 1000, "offset": 0}
         response = requests.get(
             f"{API_BASE}/admin/hotel",
-            headers={"Authorization": f"Bearer {token}"}
+            headers={"Authorization": f"Bearer {token}"},
+            params=params
         )
         response.raise_for_status()
-        hotels = response.json().get("result", [])
+        data = response.json()
+        logger.info(f"Raw /admin/hotel response: {data}")
+        hotels = data.get("result", [])
         mapping = {}
         for hotel in hotels:
             hid = hotel.get("_id")
