@@ -73,6 +73,12 @@
             color: #01579b;
             box-shadow: 0 2px 8px rgba(1,200,169,0.04);
         }
+        #result pre {
+            white-space: pre-wrap;
+            word-break: break-word;
+            overflow-x: auto;
+            max-width: 100%;
+        }
         .section-title {
             font-weight: 700;
             color: #009688;
@@ -204,25 +210,36 @@
             return `<div style="white-space:pre-line;">${raw}</div>`;
         }
 
-        document.getElementById('bookingForm').addEventListener('submit', async function(e) {
+        // Add booking form submission handler
+        document.getElementById('bookingForm').addEventListener('submit', function(e) {
             e.preventDefault();
-            const destination = document.getElementById('destination').value;
             const packageId = document.getElementById('package').value;
             const customer = document.getElementById('customer').value;
             const date = document.getElementById('date').value;
             const resultDiv = document.getElementById('result');
-            resultDiv.innerHTML = '<em>Processing...</em>';
-            try {
-                const res = await fetch('/book', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ destination, packageId, customer, date })
-                });
-                const data = await res.json();
-                resultDiv.innerHTML = formatBookingResult(data.result || data.status || data);
-            } catch (err) {
-                resultDiv.innerHTML = `<span class="error">Network error. Please try again.</span>`;
-            }
+            resultDiv.textContent = 'Booking...';
+            fetch('/book', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    plan: packageId, // <-- send the package ID
+                    customer,
+                    date
+                })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.result) {
+                    resultDiv.innerHTML = `<pre>${data.result}</pre>`;
+                } else if (data.error) {
+                    resultDiv.innerHTML = `<span class='error'>${data.error}</span>`;
+                } else {
+                    resultDiv.innerHTML = `<span class='error'>Unknown error</span>`;
+                }
+            })
+            .catch(err => {
+                resultDiv.innerHTML = `<span class='error'>${err}</span>`;
+            });
         });
     </script>
 </body>

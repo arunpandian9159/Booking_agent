@@ -98,19 +98,21 @@ def tripxplo_get_plan_details(plan_name: str):
         )
         response.raise_for_status()
         packages = response.json().get("result", {}).get("docs", [])
-        # Debug logging: print the API response for the plan search
         logger.info(f"[DEBUG] TripXplo API response for plan search '{plan_name}': {packages}")
+        # Case-insensitive, partial match
+        plan_name_lower = plan_name.lower()
         for p in packages:
-            if p.get("name") == plan_name:
-                # Try to extract origin, destination, city_code (customize as per TripXplo schema)
+            if p.get("name") and plan_name_lower in p.get("name").lower():
                 origin = p.get("origin") or p.get("from")
                 dest = p.get("destination") or p.get("to")
                 city_code = p.get("city_code") or p.get("cityCode") or p.get("to")
-                return origin, dest, city_code
-        return None, None, None
+                return origin, dest, city_code, p.get("name"), p.get("_id")
+        # If not found, return all available plan names for error reporting
+        available = [p.get("name") for p in packages if p.get("name")]
+        return None, None, None, available, None
     except Exception as e:
         logger.error(f"Error fetching plan details: {e}")
-        return None, None, None
+        return None, None, None, [], None
 
 def tripxplo_get_hotels(plan_id: str):
     token = get_tripxplo_token()
@@ -126,6 +128,27 @@ def tripxplo_get_hotels(plan_id: str):
     except Exception as e:
         logger.error(f"Error fetching hotels: {e}")
         return []
+
+# Add function to fetch package by ID
+def tripxplo_get_package_by_id(package_id: str):
+    token = get_tripxplo_token()
+    try:
+        # Fetch all packages (or use a search if needed)
+        params = {"limit": 1000, "offset": 0}
+        response = requests.get(
+            f"{API_BASE}/admin/package",
+            headers={"Authorization": f"Bearer {token}"},
+            params=params
+        )
+        response.raise_for_status()
+        packages = response.json().get("result", {}).get("docs", [])
+        for p in packages:
+            if str(p.get("_id")) == str(package_id):
+                return p
+        return None
+    except Exception as e:
+        logger.error(f"Error fetching package by ID (via list): {e}")
+        return None
 
 # =================================
 # 3. Utility/API Functions
@@ -168,7 +191,6 @@ def search_flights(origin, destination, departure_date):
     }
     headers = {"Authorization": f"Bearer {token}"}
     resp = requests.get(url, params=params, headers=headers)
-    print(f"[DEBUG] Flight API response: {resp.status_code} {resp.text}")  # Debug print
     if resp.status_code == 200:
         data = resp.json()
         if data.get("data"):
@@ -237,7 +259,12 @@ class AgentState(TypedDict):
 
 # Remove @tool decorator
 def book_travel(plan: str, customer: str, date: str = "") -> str:
-    """Books travel for the customer based on the selected plan and date. Returns a confirmation message with real API data."""
+    """
+    Books travel for the customer based on the selected package ID and date.
+    - plan: should be the TripXplo package ID
+    - Fetch package by ID, extract destination, use for flight search
+    - Fetch hotels for that package
+    """
     if not date:
         dep_date = datetime.now().date() + timedelta(days=14)
     else:
@@ -248,14 +275,33 @@ def book_travel(plan: str, customer: str, date: str = "") -> str:
     ret_date = dep_date + timedelta(days=7)
     dep_date_str = dep_date.isoformat()
     ret_date_str = ret_date.isoformat()
-    # Fetch plan details from TripXplo
-    origin, dest, city_code = tripxplo_get_plan_details(plan)
-    if not origin or not dest or not city_code:
-        return f"Plan '{plan}' is not available."
-    # Use only Amadeus for flight search
+    # Fetch package by ID
+    package = tripxplo_get_package_by_id(plan)
+    if not package:
+        return f"Package with ID '{plan}' not found."
+    plan_actual_name = package.get("packageName") or package.get("name") or plan
+    # Extract destination code for Amadeus
+    dest = None
+    # If destination is a list, pick the first and look for a 3-letter code
+    destination_data = package.get("destination") or package.get("to") or package.get("city_code") or package.get("cityCode")
+    if isinstance(destination_data, list) and destination_data:
+        dest_obj = destination_data[0]
+        destination_id = dest_obj.get("destinationId")
+        city_name = ""
+        if destination_id:
+            dest_details = tripxplo_get_destination_by_id(destination_id)
+            city_name = dest_details.get("name") or dest_details.get("city") or ""
+        if not city_name:
+            # Fallback: extract city from package name
+            city_name = extract_city_from_package_name(plan_actual_name)
+        dest = city_to_iata(city_name)
+    elif isinstance(destination_data, str) and len(destination_data) == 3:
+        dest = destination_data
+    if not dest:
+        return f"Destination code not found or invalid in package. Package: {plan_actual_name}. Raw destination data: {destination_data}"
+    origin = "MAA"  # Always use Chennai as origin
+    # --- Amadeus flight search ---
     flight_info = ""
-    flight_dicts = {}
-    flight_api_raw = None
     try:
         if AMADEUS_CLIENT_ID and AMADEUS_CLIENT_SECRET:
             token = get_amadeus_access_token()
@@ -265,60 +311,79 @@ def book_travel(plan: str, customer: str, date: str = "") -> str:
                 "destinationLocationCode": dest,
                 "departureDate": dep_date_str,
                 "adults": 1,
-                "max": 1
+                "max": 5
             }
             headers = {"Authorization": f"Bearer {token}"}
             resp = requests.get(url, params=params, headers=headers)
-            flight_api_raw = resp.text
             if resp.status_code == 200:
-                flight_info = parse_flight_with_llm(resp.text)
+                data = resp.json()
+                offers = data.get("data", [])
+                offers_sorted = sorted(offers, key=lambda o: float(o["price"]["total"]))
+                rows = []
+                for offer in offers_sorted:
+                    price = offer["price"]["total"]
+                    try:
+                        inr = float(price) * EUR_TO_INR
+                        price_inr = f"{inr:.2f} INR"
+                    except Exception:
+                        price_inr = "- INR"
+                    carrier = offer["itineraries"][0]["segments"][0]["carrierCode"] if offer["itineraries"] and offer["itineraries"][0]["segments"] else ""
+                    dep = offer["itineraries"][0]["segments"][0]["departure"]["at"] if offer["itineraries"] and offer["itineraries"][0]["segments"] else ""
+                    arr = offer["itineraries"][0]["segments"][0]["arrival"]["at"] if offer["itineraries"] and offer["itineraries"][0]["segments"] else ""
+                    rows.append(f"| {origin} | {dest} | {dep} | {arr} | {carrier} | {price_inr} |")
+                if rows:
+                    flight_info = (
+                        "| From | To | Departure | Arrival | Carrier | Price |\n"
+                        "|------|----|-----------|--------|---------|-------|\n" +
+                        "\n".join(rows)
+                    )
+                else:
+                    flight_info = "No flights found."
             else:
                 flight_info = f"Flight search error: {resp.text}"
         else:
             flight_info = "No flight API credentials configured."
     except Exception as e:
         flight_info = f"Flight search error: {str(e)}"
-    print(f"[DEBUG] flight_info: {flight_info}")  # Debug print
-    # Fetch hotels from TripXplo
+    # --- TripXplo hotel search ---
     hotel_info = ""
-    hotel_api_raw = None
     try:
-        # Find the TripXplo plan ID
-        token = get_tripxplo_token()
-        params = {"limit": 100, "offset": 0, "search": plan}
-        response = requests.get(
-            f"{API_BASE}/admin/package",
-            headers={"Authorization": f"Bearer {token}"},
-            params=params
-        )
-        response.raise_for_status()
-        packages = response.json().get("result", {}).get("docs", [])
-        plan_id = None
-        for p in packages:
-            if p.get("name") == plan:
-                plan_id = p.get("_id")
-                break
-        if not plan_id:
-            hotel_info = "No hotels found (plan ID not found)."
+        hotels = tripxplo_get_hotels(plan)
+        def get_price(h):
+            for k in ["price", "minPrice", "amount"]:
+                v = h.get(k)
+                try:
+                    return float(v)
+                except Exception:
+                    continue
+            return float("inf")
+        hotels_sorted = sorted(hotels, key=get_price)
+        rows = []
+        for h in hotels_sorted:
+            name = h.get("hotelName") or h.get("name") or ""
+            city = h.get("city") or ""
+            price = get_price(h)
+            price_str = f"{price:.2f} INR" if price != float("inf") else "-"
+            rows.append(f"| {name} ({city}) | {price_str} |")
+        if rows:
+            hotel_info = (
+                "| Hotel (City) | Price |\n"
+                "|--------------|-------|\n" +
+                "\n".join(rows)
+            )
         else:
-            hotels = tripxplo_get_hotels(plan_id)
-            if hotels:
-                # Use LLM to parse and present hotel info
-                hotel_info = parse_hotel_with_llm(str(hotels))
-            else:
-                hotel_info = "No hotels found."
+            hotel_info = "No hotels found."
     except Exception as e:
         hotel_info = f"Hotel search error: {str(e)}"
-    print(f"[DEBUG] hotel_info: {hotel_info}")  # Debug print
     # Build structured output
     result = (
-        f"Plan: {plan}\n"
+        f"Package: {plan_actual_name}\n"
         f"Status: ✅ Complete\n"
         f"\n"
-        f"✈️ Flight Details (AI Parsed)\n"
+        f"✈️ Flight Details (sorted by price, Chennai to {dest})\n"
         f"{flight_info}\n"
         f"\n"
-        f"🏨 Hotel Details (AI Parsed)\n"
+        f"🏨 Hotel Details (sorted by price)\n"
         f"{hotel_info}\n"
     )
     return result.strip()
@@ -419,10 +484,27 @@ async def select_plan(request: Request):
     plan = data.get("plan") or ""
     customer = data.get("customer") or ""
     date = data.get("date") or ""
+    if not plan:
+        return JSONResponse({"error": "Plan is required."}, status_code=400)
     system_message = SystemMessage(content="You are a travel booking agent. When a customer selects a plan, book it for them.")
     human_message = HumanMessage(content=f"Customer {customer} selected plan: {plan} for departure on {date}. Please book it.")
     state = AgentState(messages=[system_message, human_message])
     # Directly call the function with the date argument
+    result = book_travel(plan=plan, customer=customer, date=date)
+    return {"status": "booking_completed", "result": result}
+
+@app.post("/book")
+async def book(request: Request):
+    """Endpoint to book a travel plan for a customer (alias for /select_plan)."""
+    data = await request.json()
+    plan = data.get("plan") or ""
+    customer = data.get("customer") or ""
+    date = data.get("date") or ""
+    if not plan:
+        return JSONResponse({"error": "Plan is required."}, status_code=400)
+    system_message = SystemMessage(content="You are a travel booking agent. When a customer selects a plan, book it for them.")
+    human_message = HumanMessage(content=f"Customer {customer} selected plan: {plan} for departure on {date}. Please book it.")
+    state = AgentState(messages=[system_message, human_message])
     result = book_travel(plan=plan, customer=customer, date=date)
     return {"status": "booking_completed", "result": result}
 
@@ -460,8 +542,7 @@ async def get_packages(destination: str = ""):
                         "name": p.get("packageName")
                     })
         if filtered:
-            print(f"[DEBUG] First filtered package full object: {next(p for p in packages if p.get('_id') == filtered[0]['id'])}")
-        print(f"[DEBUG] /packages destination={destination!r} filtered={filtered}")
+            pass  # Removed debug print
         return JSONResponse({"packages": filtered})
     except Exception as e:
         print(f"[ERROR] /packages exception: {e}")
@@ -471,6 +552,45 @@ async def get_packages(destination: str = ""):
 # 7. Main Entrypoint
 # =================================
 
+# Add a static mapping for city name to IATA code
+CITY_TO_IATA = {
+    "Bali": "DPS",
+    "Bangkok": "BKK",
+    "Singapore": "SIN",
+    # Add more as needed
+}
+
+def city_to_iata(city_name: str) -> str:
+    """Convert city name to IATA code using static mapping."""
+    return CITY_TO_IATA.get(city_name.strip().title(), "")
+
+def extract_city_from_package_name(package_name: str) -> str:
+    # Try to match known city names in the package name
+    for city in CITY_TO_IATA.keys():
+        if city.lower() in package_name.lower():
+            return city
+    # Fallback: regex for 'in <City>'
+    match = re.search(r'in ([A-Za-z ]+)', package_name)
+    if match:
+        return match.group(1).strip()
+    return ""
+
+# Add function to fetch destination details by ID
+
+def tripxplo_get_destination_by_id(destination_id: str):
+    token = get_tripxplo_token()
+    try:
+        response = requests.get(
+            f"{API_BASE}/admin/destination/{destination_id}",
+            headers={"Authorization": f"Bearer {token}"}
+        )
+        response.raise_for_status()
+        return response.json().get("result", {})
+    except Exception as e:
+        logger.error(f"Error fetching destination by ID: {e}")
+        return {}
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000) 
+    
