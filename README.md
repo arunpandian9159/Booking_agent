@@ -1,51 +1,69 @@
 # Booking Agent
 
-This is a Booking Agent application for managing travel plans. The backend is implemented in Python and uses Supabase as the database for storing travel plans.
+A modular FastAPI-based travel booking agent that integrates with TripXplo and Amadeus APIs, and uses Google Gemini LLM for advanced parsing and recommendations.
 
 ## Features
-- Manage and store travel plans
-- Integration with Supabase database
-- Simple web interface (see `static/index.html`)
+- Search and view travel packages (TripXplo)
+- Book travel plans (flights, hotels)
+- Fetch destinations and packages by destination
+- Currency conversion (EUR to INR)
+- LLM-powered parsing for flight and hotel data
+- Modular, maintainable codebase
 
 ## Project Structure
-- `booking_agent.py`: Main backend application
-- `static/index.html`: Frontend HTML file
-- `requirements.txt`: Python dependencies
-- `package-lock.json`: Node dependencies (if applicable)
+```
+Booking_agent/
+├── amadeus_api.py         # Amadeus API integration (token, flight search)
+├── auth.py                # Authentication helpers (if needed)
+├── business_logic.py      # Core business logic (booking, hotel extraction)
+├── config.py              # Environment variables, constants, logging
+├── llm_utils.py           # LLM setup and parsing helpers
+├── main.py                # FastAPI app and endpoints
+├── packages.py            # Package fetching helpers
+├── requirements.txt       # Python dependencies
+├── render.yaml            # Deployment config (Render.com)
+├── static/
+│   └── index.html         # Frontend (if any)
+├── tripxplo_api.py        # TripXplo API integration
+├── utils.py               # Utility functions (currency, city mapping)
+└── README.md              # This file
+```
 
-## Setup Instructions
-
-### Prerequisites
-- Python 3.8+
-- Node.js (if using frontend build tools)
-- Supabase account and project
-
-### Installation
-1. Clone the repository:
-   ```bash
-   git clone <https://github.com/arunpandian9159/Booking_agent>
-   cd Booking_agent
-   ```
-2. Install Python dependencies:
+## Setup
+1. **Clone the repository**
+2. **Install dependencies**
    ```bash
    pip install -r requirements.txt
    ```
-3. (Optional) Install Node dependencies:
+3. **Set environment variables**
+   - Create a `.env` file in the root directory with the following keys:
+     ```env
+     GOOGLE_API_KEY=your_google_api_key
+     GOOGLE_PROJECT_ID=your_project_id
+     GOOGLE_LOCATION=us-central1
+     AMADEUS_CLIENT_ID=your_amadeus_client_id
+     AMADEUS_CLIENT_SECRET=your_amadeus_client_secret
+     TRIPXPLO_EMAIL=your_tripxplo_email
+     TRIPXPLO_PASSWORD=your_tripxplo_password
+     ```
+4. **Run the app**
    ```bash
-   npm install
+   python main.py
    ```
-4. Configure your Supabase credentials (see below).
+   The API will be available at `http://localhost:8000/`
 
-### Supabase Configuration
-Set your Supabase URL and API key as environment variables or in your configuration file as required by your application.
+## API Endpoints
+- `GET /` — Serve the frontend (static/index.html)
+- `GET /plans` — List available travel plans
+- `POST /select_plan` — Book a selected plan
+- `POST /book` — Book a plan (alternate endpoint)
+- `GET /destinations` — List all destinations
+- `GET /packages?destination=DEST` — List packages for a destination
 
-## Usage
-Run the backend server:
-```bash
-python booking_agent.py
-```
-
-Open `http://localhost:8000/` in your browser to access the frontend.
+## Customization
+- Add new business logic in `business_logic.py`
+- Extend API integrations in `tripxplo_api.py` or `amadeus_api.py`
+- Add utility functions in `utils.py`
 
 ## License
 MIT 
