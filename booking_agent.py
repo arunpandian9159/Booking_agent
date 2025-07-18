@@ -4,6 +4,7 @@
 import os
 import operator
 import requests
+import logging
 from fastapi import FastAPI, Request
 from dotenv import load_dotenv
 from typing import Annotated, Sequence, TypedDict, Optional
@@ -14,12 +15,16 @@ from langgraph.graph import StateGraph, END
 from langchain_core.messages import ToolMessage, AIMessage
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
-from supabase import create_client, Client
+from packages import fetch_packages
 from datetime import datetime, timedelta
 import re
 
 # Load environment variables from .env file
-load_dotenv()
+load_dotenv()  # For TripXplo
+
+# Logging setup for TripXplo
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 GOOGLE_PROJECT_ID = os.getenv("GOOGLE_PROJECT_ID")
@@ -29,16 +34,98 @@ GOOGLE_LOCATION = os.getenv("GOOGLE_LOCATION", "us-central1")
 AMADEUS_CLIENT_ID = os.getenv("AMADEUS_CLIENT_ID")
 AMADEUS_CLIENT_SECRET = os.getenv("AMADEUS_CLIENT_SECRET")
 
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+# --- TripXplo API credentials ---
+API_BASE = "https://api.tripxplo.com/v1/api"
+TRIPXPLO_EMAIL = os.getenv("TRIPXPLO_EMAIL")
+TRIPXPLO_PASSWORD = os.getenv("TRIPXPLO_PASSWORD")
 
 # =================================
-# 2. API Client Initialization
+# 2. TripXplo API Functions
 # =================================
 
-supabase: Optional[Client] = None
-if SUPABASE_URL and SUPABASE_KEY:
-    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+_token_cache = None
+
+def get_tripxplo_token():
+    global _token_cache
+    if _token_cache:
+        logger.info("Using cached token")
+        return _token_cache
+    logger.info("Fetching new token from TripXplo API")
+    try:
+        response = requests.put(
+            f"{API_BASE}/admin/auth/login",
+            json={"email": TRIPXPLO_EMAIL, "password": TRIPXPLO_PASSWORD}
+        )
+        response.raise_for_status()
+        _token_cache = response.json().get("accessToken")
+        if not _token_cache:
+            raise ValueError("No accessToken in login response")
+        logger.info(f"✅ Logged in successfully. JWT Token:\n{_token_cache}\n")
+        return _token_cache
+    except Exception as e:
+        logger.error(f"Token fetch error: {e}")
+        _token_cache = None
+        raise
+
+def tripxplo_get_plans(search: str = ""):
+    token = get_tripxplo_token()
+    params = {"limit": str(100), "offset": str(0)}
+    if search:
+        params["search"] = str(search)
+    try:
+        response = requests.get(
+            f"{API_BASE}/admin/package",
+            headers={"Authorization": f"Bearer {token}"},
+            params=params
+        )
+        response.raise_for_status()
+        packages = response.json().get("result", {}).get("docs", [])
+        logger.info(f"Fetched {len(packages)} packages with search='{search}'")
+        # Map to expected format: name, description
+        return [{"name": p.get("name"), "description": p.get("description")} for p in packages]
+    except Exception as e:
+        logger.error(f"Error fetching packages: {e}")
+        return []
+
+def tripxplo_get_plan_details(plan_name: str):
+    token = get_tripxplo_token()
+    params = {"limit": 100, "offset": 0, "search": plan_name}
+    try:
+        response = requests.get(
+            f"{API_BASE}/admin/package",
+            headers={"Authorization": f"Bearer {token}"},
+            params=params
+        )
+        response.raise_for_status()
+        packages = response.json().get("result", {}).get("docs", [])
+        # Debug logging: print the API response for the plan search
+        logger.info(f"[DEBUG] TripXplo API response for plan search '{plan_name}': {packages}")
+        for p in packages:
+            if p.get("name") == plan_name:
+                # Try to extract origin, destination, city_code (customize as per TripXplo schema)
+                origin = p.get("origin") or p.get("from")
+                dest = p.get("destination") or p.get("to")
+                city_code = p.get("city_code") or p.get("cityCode") or p.get("to")
+                return origin, dest, city_code
+        return None, None, None
+    except Exception as e:
+        logger.error(f"Error fetching plan details: {e}")
+        return None, None, None
+
+def tripxplo_get_hotels(plan_id: str):
+    token = get_tripxplo_token()
+    try:
+        response = requests.get(
+            f"{API_BASE}/admin/package/{plan_id}/available/get",
+            headers={"Authorization": f"Bearer {token}"}
+        )
+        response.raise_for_status()
+        hotels = response.json().get("result", [])
+        logger.info(f"Fetched {len(hotels)} hotels for package {plan_id}")
+        return hotels
+    except Exception as e:
+        logger.error(f"Error fetching hotels: {e}")
+        return []
 
 # =================================
 # 3. Utility/API Functions
@@ -64,7 +151,7 @@ def eur_to_inr(eur_str):
     try:
         eur = float(eur_str)
         inr = eur * EUR_TO_INR
-        return f"{inr:.2f} INR ({eur:.2f} EUR)"
+        return f"{inr:.2f} INR ({{eur:.2f}} EUR)"
     except Exception:
         return f"- INR (- EUR)"
 
@@ -109,84 +196,6 @@ def search_flights(origin, destination, departure_date):
             return "No flights found.", {}
     else:
         return f"Flight search error: {resp.text}", {}
-
-def get_hotel_ids_for_city(city_code):
-    """Get hotel IDs for a given city code using Amadeus API."""
-    token = get_amadeus_access_token()
-    url = "https://test.api.amadeus.com/v1/reference-data/locations/hotels/by-city"
-    params = {"cityCode": city_code}
-    headers = {"Authorization": f"Bearer {token}"}
-    resp = requests.get(url, params=params, headers=headers)
-    if resp.status_code == 200:
-        data = resp.json()
-        if data.get("data"):
-            # Return a list of hotelIds (limit to 5 for demo)
-            return [hotel["hotelId"] for hotel in data["data"][:5]]
-    return []
-
-def search_hotels(city_code, checkin_date, checkout_date):
-    """Search for hotels using Amadeus API."""
-    token = get_amadeus_access_token()
-    hotel_ids = get_hotel_ids_for_city(city_code)
-    if not hotel_ids:
-        return "No hotels found (could not retrieve hotel IDs)."
-    url = "https://test.api.amadeus.com/v3/shopping/hotel-offers"
-    params = {
-        "hotelIds": ",".join(hotel_ids),
-        "checkInDate": checkin_date,
-        "checkOutDate": checkout_date,
-        "adults": 1,
-        "roomQuantity": 1,
-        "bestRateOnly": True,
-        "view": "FULL"
-    }
-    headers = {"Authorization": f"Bearer {token}"}
-    resp = requests.get(url, params=params, headers=headers)
-    print(f"[DEBUG] Hotel API response: {resp.status_code} {resp.text}")  # Debug print
-    if resp.status_code == 200:
-        data = resp.json()
-        if data.get("data"):
-            hotel = data["data"][0]
-            name = hotel["hotel"]["name"]
-            price = hotel["offers"][0]["price"]["total"]
-            # Convert EUR to INR and show both
-            price_str = eur_to_inr(price)
-            return f"Hotel found: {name}, price: {price_str}"
-        else:
-            return "No hotels found."
-    else:
-        return f"Hotel search error: {resp.text}"
-
-# --- Supabase plan functions ---
-def supabase_get_plans():
-    """Retrieve all travel plans from Supabase."""
-    if not supabase:
-        return []
-    res = supabase.table("plans").select("name, description").execute()
-    return res.data if res.data else []
-
-def supabase_add_plan(plan: dict):
-    """Add a new travel plan to Supabase."""
-    if not supabase:
-        return {"status": "error", "message": "Supabase not configured."}
-    try:
-        res = supabase.table("plans").insert(plan).execute()
-        if res.data:
-            return {"status": "success"}
-        else:
-            return {"status": "error", "message": str(res)}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
-
-def supabase_get_plan_details(plan_name):
-    """Get details (origin, destination, city_code) for a specific plan from Supabase."""
-    if not supabase:
-        return None, None, None
-    res = supabase.table("plans").select("origin, destination, city_code").eq("name", plan_name).limit(1).execute()
-    if res.data and len(res.data) > 0:
-        row = res.data[0]
-        return row["origin"], row["destination"], row["city_code"]
-    return None, None, None
 
 # =================================
 # 3A. LLM-powered Parsing Functions
@@ -239,7 +248,8 @@ def book_travel(plan: str, customer: str, date: str = "") -> str:
     ret_date = dep_date + timedelta(days=7)
     dep_date_str = dep_date.isoformat()
     ret_date_str = ret_date.isoformat()
-    origin, dest, city_code = supabase_get_plan_details(plan)
+    # Fetch plan details from TripXplo
+    origin, dest, city_code = tripxplo_get_plan_details(plan)
     if not origin or not dest or not city_code:
         return f"Plan '{plan}' is not available."
     # Use only Amadeus for flight search
@@ -269,36 +279,36 @@ def book_travel(plan: str, customer: str, date: str = "") -> str:
     except Exception as e:
         flight_info = f"Flight search error: {str(e)}"
     print(f"[DEBUG] flight_info: {flight_info}")  # Debug print
+    # Fetch hotels from TripXplo
     hotel_info = ""
     hotel_api_raw = None
-    if AMADEUS_CLIENT_ID and AMADEUS_CLIENT_SECRET:
-        try:
-            token = get_amadeus_access_token()
-            hotel_ids = get_hotel_ids_for_city(city_code)
-            if not hotel_ids:
-                hotel_info = "No hotels found (could not retrieve hotel IDs)."
+    try:
+        # Find the TripXplo plan ID
+        token = get_tripxplo_token()
+        params = {"limit": 100, "offset": 0, "search": plan}
+        response = requests.get(
+            f"{API_BASE}/admin/package",
+            headers={"Authorization": f"Bearer {token}"},
+            params=params
+        )
+        response.raise_for_status()
+        packages = response.json().get("result", {}).get("docs", [])
+        plan_id = None
+        for p in packages:
+            if p.get("name") == plan:
+                plan_id = p.get("_id")
+                break
+        if not plan_id:
+            hotel_info = "No hotels found (plan ID not found)."
+        else:
+            hotels = tripxplo_get_hotels(plan_id)
+            if hotels:
+                # Use LLM to parse and present hotel info
+                hotel_info = parse_hotel_with_llm(str(hotels))
             else:
-                url = "https://test.api.amadeus.com/v3/shopping/hotel-offers"
-                params = {
-                    "hotelIds": ",".join(hotel_ids),
-                    "checkInDate": dep_date_str,
-                    "checkOutDate": ret_date_str,
-                    "adults": 1,
-                    "roomQuantity": 1,
-                    "bestRateOnly": True,
-                    "view": "FULL"
-                }
-                headers = {"Authorization": f"Bearer {token}"}
-                resp = requests.get(url, params=params, headers=headers)
-                hotel_api_raw = resp.text
-                if resp.status_code == 200:
-                    hotel_info = parse_hotel_with_llm(resp.text)
-                else:
-                    hotel_info = f"Hotel search error: {resp.text}"
-        except Exception as e:
-            hotel_info = f"Hotel search error: {str(e)}"
-    else:
-        hotel_info = "Hotel search not available (Amadeus credentials required)."
+                hotel_info = "No hotels found."
+    except Exception as e:
+        hotel_info = f"Hotel search error: {str(e)}"
     print(f"[DEBUG] hotel_info: {hotel_info}")  # Debug print
     # Build structured output
     result = (
@@ -388,19 +398,23 @@ def serve_index():
     return FileResponse("static/index.html")
 
 @app.get("/plans")
-def get_plans():
-    """Endpoint to get all travel plans."""
-    plans = supabase_get_plans()
-    return JSONResponse({"plans": plans})
+async def get_plans():
+    """Endpoint to get all travel plans (TripXplo, async)."""
+    try:
+        plans = await fetch_packages()
+        plans = [{"name": p.get("name"), "description": p.get("description")} for p in plans]
+        return JSONResponse({"plans": plans})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 @app.post("/add_plan")
 def add_plan(plan: dict):
-    """Endpoint to add a new travel plan."""
-    return supabase_add_plan(plan)
+    """Endpoint to add a new travel plan (not supported in TripXplo demo)."""
+    return {"status": "error", "message": "Adding plans is not supported via TripXplo API."}
 
 @app.post("/select_plan")
 async def select_plan(request: Request):
-    """Endpoint to select and book a travel plan for a customer."""
+    """Endpoint to select and book a travel plan for a customer (TripXplo for plan/hotel, Amadeus for flight)."""
     data = await request.json()
     plan = data.get("plan") or ""
     customer = data.get("customer") or ""
@@ -411,6 +425,25 @@ async def select_plan(request: Request):
     # Directly call the function with the date argument
     result = book_travel(plan=plan, customer=customer, date=date)
     return {"status": "booking_completed", "result": result}
+
+@app.get("/destinations")
+async def get_destinations():
+    """Endpoint to get all destinations (extracted from plans)."""
+    try:
+        plans = await fetch_packages()
+        destinations = []
+        for p in plans:
+            dest = p.get("destination") or p.get("to")
+            # If dest is a dict, extract 'name' or 'code'
+            if isinstance(dest, dict):
+                name = dest.get("name") or dest.get("code")
+                if name:
+                    destinations.append(name)
+            elif isinstance(dest, str):
+                destinations.append(dest)
+        return JSONResponse({"destinations": destinations})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 # =================================
 # 7. Main Entrypoint
