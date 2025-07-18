@@ -92,85 +92,134 @@
     <div class="container">
         <h2>Travel Booking Agent</h2>
         <form id="bookingForm">
-            <label for="plan">Select Plan:</label>
-            <select id="plan" name="plan">
+            <label for="destination">Select Destination:</label>
+            <select id="destination" name="destination">
                 <option value="">Loading...</option>
             </select>
-            <label for="customer">Your Name:</label>
-            <input type="text" id="customer" name="customer" required placeholder="Enter your name" />
-            <label for="date">Select Departure Date:</label>
-            <input type="date" id="date" name="date" required min="2024-01-01" />
-            <button type="submit">Book Now</button>
+            <label for="package" style="display:none;">Select Package:</label>
+            <select id="package" name="package" style="display:none;"></select>
+            <div id="detailsSection" style="display:none;">
+                <label for="customer">Your Name:</label>
+                <input type="text" id="customer" name="customer" required placeholder="Enter your name" />
+                <label for="date">Select Departure Date:</label>
+                <input type="date" id="date" name="date" required min="2024-01-01" />
+                <button type="submit">Book Now</button>
+            </div>
         </form>
         <div id="result"></div>
     </div>
     <script>
-        // Fetch available plans from backend
-        fetch('/plans')
+        // Fetch available destinations from backend
+        fetch('/destinations')
             .then(res => res.json())
             .then(data => {
-                const planSelect = document.getElementById('plan');
-                planSelect.innerHTML = '';
-                if (data.plans.length === 0) {
+                const destSelect = document.getElementById('destination');
+                destSelect.innerHTML = '';
+                if (!data.destinations || data.destinations.length === 0) {
                     const opt = document.createElement('option');
                     opt.value = '';
-                    opt.textContent = 'No plans available';
-                    planSelect.appendChild(opt);
+                    opt.textContent = 'No destinations available';
+                    destSelect.appendChild(opt);
                 } else {
-                    data.plans.forEach(plan => {
+                    const opt = document.createElement('option');
+                    opt.value = '';
+                    opt.textContent = 'Select a destination';
+                    destSelect.appendChild(opt);
+                    data.destinations.forEach(dest => {
                         const opt = document.createElement('option');
-                        opt.value = plan.name;
-                        opt.textContent = plan.name;
-                        planSelect.appendChild(opt);
+                        opt.value = dest;
+                        opt.textContent = dest;
+                        destSelect.appendChild(opt);
                     });
                 }
             });
 
-        function formatBookingResult(raw) {
-            // Example input: "Booking for arun with plan 'Tokyo Adventure' is complete. A flight has been booked from LAX to HND on 2025-07-31 for 404.18 EUR. However, the hotel search failed with the following error: INVALID FORMAT: Parameter not found in collection. Required parameter: hotelIds. Enjoy your trip"
-            const match = raw.match(/Booking for (.+) with plan '(.+)' is complete. A flight has been booked from (.+) to (.+) on (\\d{4}-\\d{2}-\\d{2}) for ([\\d.]+ EUR). However, the hotel search failed with the following error: (.+)\\. Enjoy your trip/i);
-            if (match) {
-                const [, customer, plan, from, to, date, price, hotelError] = match;
-                return `
-                    <div class="section-title">Booking Confirmation for ${customer.charAt(0).toUpperCase() + customer.slice(1)}</div>
-                    <div><b>Plan:</b> ${plan}</div>
-                    <div><b>Status:</b> <span style="color:green;">&#x2705; Complete</span></div>
-                    <hr/>
-                    <div class="section-title">✈️ Flight Details</div>
-                    <ul>
-                        <li><b>From:</b> ${from}</li>
-                        <li><b>To:</b> ${to}</li>
-                        <li><b>Date:</b> ${date}</li>
-                        <li><b>Price:</b> ${price}</li>
-                        <li><b>Status:</b> Booked Successfully</li>
-                    </ul>
-                    <div class="section-title">🏨 Hotel Details</div>
-                    <ul>
-                        <li><b>Status:</b> <span style="color:#d32f2f;">&#x274C; Not Booked</span></li>
-                        <li><b>Reason:</b> <i>${hotelError}</i></li>
-                    </ul>
-                    <div style="margin-top:1em;font-style:italic;color:#388e3c;">Enjoy your trip, ${customer.charAt(0).toUpperCase() + customer.slice(1)}!</div>
-                `;
+        document.getElementById('destination').addEventListener('change', function() {
+            const destination = this.value;
+            const packageSelect = document.getElementById('package');
+            const packageLabel = document.querySelector('label[for="package"]');
+            const detailsSection = document.getElementById('detailsSection');
+            packageSelect.style.display = 'none';
+            packageLabel.style.display = 'none';
+            detailsSection.style.display = 'none';
+            packageSelect.innerHTML = '';
+            if (!destination) return;
+            // Fetch packages for selected destination
+            fetch(`/packages?destination=${encodeURIComponent(destination)}`)
+                .then(res => res.json())
+                .then(data => {
+                    packageSelect.innerHTML = '';
+                    if (!data.packages || data.packages.length === 0) {
+                        const opt = document.createElement('option');
+                        opt.value = '';
+                        opt.textContent = 'No packages available';
+                        packageSelect.appendChild(opt);
+                    } else {
+                        const opt = document.createElement('option');
+                        opt.value = '';
+                        opt.textContent = 'Select a package';
+                        packageSelect.appendChild(opt);
+                        data.packages.forEach(pkg => {
+                            const opt = document.createElement('option');
+                            opt.value = pkg.id;
+                            opt.textContent = pkg.name;
+                            packageSelect.appendChild(opt);
+                        });
+                    }
+                    packageSelect.style.display = 'block';
+                    packageLabel.style.display = 'block';
+                });
+        });
+
+        document.getElementById('package').addEventListener('change', function() {
+            const detailsSection = document.getElementById('detailsSection');
+            if (this.value) {
+                detailsSection.style.display = 'block';
+            } else {
+                detailsSection.style.display = 'none';
             }
+        });
+
+        function formatBookingResult(raw) {
+            // Try to parse and show flight and hotel prices
+            try {
+                const data = typeof raw === 'string' ? JSON.parse(raw) : raw;
+                let html = '';
+                if (data.flight) {
+                    html += `<div class="section-title">✈️ Best Flight</div><ul>`;
+                    html += `<li><b>From:</b> ${data.flight.from}</li>`;
+                    html += `<li><b>To:</b> ${data.flight.to}</li>`;
+                    html += `<li><b>Date:</b> ${data.flight.date}</li>`;
+                    html += `<li><b>Price:</b> ${data.flight.price}</li></ul>`;
+                }
+                if (data.hotel) {
+                    html += `<div class="section-title">🏨 Best Hotel</div><ul>`;
+                    html += `<li><b>Name:</b> ${data.hotel.name}</li>`;
+                    html += `<li><b>Price:</b> ${data.hotel.price}</li>`;
+                    html += `<li><b>Rating:</b> ${data.hotel.rating}</li></ul>`;
+                }
+                if (html) return html;
+            } catch {}
             // fallback to previous formatting
             return `<div style="white-space:pre-line;">${raw}</div>`;
         }
 
         document.getElementById('bookingForm').addEventListener('submit', async function(e) {
             e.preventDefault();
-            const plan = document.getElementById('plan').value;
+            const destination = document.getElementById('destination').value;
+            const packageId = document.getElementById('package').value;
             const customer = document.getElementById('customer').value;
+            const date = document.getElementById('date').value;
             const resultDiv = document.getElementById('result');
             resultDiv.innerHTML = '<em>Processing...</em>';
-            const date = document.getElementById('date').value;
             try {
-                const res = await fetch('/select_plan', {
+                const res = await fetch('/book', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ plan, customer, date })
+                    body: JSON.stringify({ destination, packageId, customer, date })
                 });
                 const data = await res.json();
-                resultDiv.innerHTML = formatBookingResult(data.result || data.status);
+                resultDiv.innerHTML = formatBookingResult(data.result || data.status || data);
             } catch (err) {
                 resultDiv.innerHTML = `<span class="error">Network error. Please try again.</span>`;
             }
