@@ -45,7 +45,7 @@ Run the backend server:
 python booking_agent.py
 ```
 
-Open `static/index.html` in your browser to access the frontend.
+Open `http://localhost:8000/` in your browser to access the frontend.
 
 ## License
 MIT 
