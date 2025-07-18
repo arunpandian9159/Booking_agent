@@ -277,6 +277,7 @@ def book_travel(plan: str, customer: str, date: str = "") -> str:
     ret_date_str = ret_date.isoformat()
     # Fetch package by ID
     package = tripxplo_get_package_by_id(plan)
+    logger.info(f"[DEBUG] Package data: {package}")
     if not package:
         return f"Package with ID '{plan}' not found."
     plan_actual_name = package.get("packageName") or package.get("name") or plan
@@ -292,8 +293,8 @@ def book_travel(plan: str, customer: str, date: str = "") -> str:
             dest_details = tripxplo_get_destination_by_id(destination_id)
             city_name = dest_details.get("name") or dest_details.get("city") or ""
         if not city_name:
-            # Fallback: extract city from package name
-            city_name = extract_city_from_package_name(plan_actual_name)
+            # Fallback: extract city from package name or destinationName
+            city_name = extract_city_from_package_name(plan_actual_name, package)
         dest = city_to_iata(city_name)
     elif isinstance(destination_data, str) and len(destination_data) == 3:
         dest = destination_data
@@ -348,7 +349,9 @@ def book_travel(plan: str, customer: str, date: str = "") -> str:
     # --- TripXplo hotel search ---
     hotel_info = ""
     try:
-        hotels = tripxplo_get_hotels(plan)
+        hotels = extract_hotels_from_package(package)
+        if not hotels:
+            hotels = tripxplo_get_hotels(plan)
         def get_price(h):
             for k in ["price", "minPrice", "amount"]:
                 v = h.get(k)
@@ -357,18 +360,17 @@ def book_travel(plan: str, customer: str, date: str = "") -> str:
                 except Exception:
                     continue
             return float("inf")
-        hotels_sorted = sorted(hotels, key=get_price)
+        hotels_sorted = sorted(hotels, key=get_price) if hotels else []
         rows = []
         for h in hotels_sorted:
-            name = h.get("hotelName") or h.get("name") or ""
-            city = h.get("city") or ""
-            price = get_price(h)
-            price_str = f"{price:.2f} INR" if price != float("inf") else "-"
-            rows.append(f"| {name} ({city}) | {price_str} |")
+            room_id = h.get("hotelRoomId", "")
+            meal_plan = h.get("mealPlan", "")
+            nights = h.get("noOfNight", "")
+            rows.append(f"| {room_id} | {meal_plan} | {nights} |")
         if rows:
             hotel_info = (
-                "| Hotel (City) | Price |\n"
-                "|--------------|-------|\n" +
+                "| Hotel Room ID | Meal Plan | Nights |\n"
+                "|---------------|-----------|--------|\n" +
                 "\n".join(rows)
             )
         else:
@@ -387,6 +389,18 @@ def book_travel(plan: str, customer: str, date: str = "") -> str:
         f"{hotel_info}\n"
     )
     return result.strip()
+
+def extract_hotels_from_package(package):
+    # Prefer the 'hotel' field if present and is a list
+    hotels = package.get("hotel")
+    if hotels and isinstance(hotels, list):
+        return hotels
+    # Fallback to previous logic
+    for key in ["hotels", "hotelOptions", "availableHotels"]:
+        hotels = package.get(key)
+        if hotels and isinstance(hotels, list):
+            return hotels
+    return []
 
 # =================================
 # 5. LangGraph/LLM Setup
@@ -554,9 +568,50 @@ async def get_packages(destination: str = ""):
 
 # Add a static mapping for city name to IATA code
 CITY_TO_IATA = {
+    "Kodaikanal": "MAA",  # Nearest major airport (Madurai or Coimbatore are closer, but Chennai is a larger hub)
+    "Kullu": "KUU",      # Bhuntar Airport
+    "Kumarakom": "COK",  # Cochin International Airport (nearest major airport)
+    "Kuta": "DPS",       # Denpasar, Bali Airport
+    "Manali": "KUU",     # Bhuntar Airport (for Kullu, nearest to Manali)
+    "Meghalaya": "SHL",  # Shillong Airport (for Meghalaya)
+    "Munnar": "COK",     # Cochin International Airport (nearest major airport)
+    "Mysore": "MYQ",
+    "Neil Island": "IXZ", # Port Blair Airport (for Andaman & Nicobar Islands)
+    "Ooty": "CJB",       # Coimbatore International Airport (nearest major airport)
+    "Pahalgam": "SXR",   # Srinagar International Airport (nearest major airport)
+    "Port Blair": "IXZ",
+    "Seminyak": "DPS",   # Denpasar, Bali Airport
+    "Shillong": "SHL",
+    "Shimla": "SLV",     # Shimla Airport
+    "Sikkim": "PYG",     # Pakyong Airport (for Sikkim)
+    "Siliguri": "IXB",   # Bagdogra International Airport (nearest major airport)
+    "Srinagar": "SXR",
+    "Ubud": "DPS",       # Denpasar, Bali Airport
+    "Varkala": "TRV",    # Thiruvananthapuram International Airport (nearest major airport)
+    "Agra": "AGR",
+    "Alleppey": "COK",   # Cochin International Airport (nearest major airport)
+    "Andaman": "IXZ",    # Port Blair Airport
     "Bali": "DPS",
+    "Chandigarh": "IXC",
+    "Cherrapunjee": "SHL", # Shillong Airport (nearest major airport)
+    "Coimbatore": "CJB",
+    "Coonoor": "CJB",    # Coimbatore International Airport (nearest major airport)
+    "Coorg": "IXM",      # Madurai Airport (nearest major airport, though Mangalore or Kannur are also options)
+    "Darjeeling": "IXB", # Bagdogra International Airport (nearest major airport)
+    "Delhi": "DEL",
+    "Dwaki": "SHL",      # Shillong Airport (nearest major airport)
+    "Gangtok": "PYG",    # Pakyong Airport (for Sikkim, nearest to Gangtok)
+    "Goa": "GOX",        # Manohar International Airport, Mopa, Goa (or Dabolim Airport GOI)
+    "Havelock": "IXZ",   # Port Blair Airport (for Andaman & Nicobar Islands)
+    "Himachal": "KUU",   # Multiple airports, Bhuntar is a common one for tourist areas
+    "Kashmir": "SXR",    # Srinagar International Airport (major airport in Kashmir)
+    "Kasol": "KUU",      # Bhuntar Airport (nearest to Kasol)
+    "Kaziranga": "JRH",  # Jorhat Airport (nearest to Kaziranga)
+    "Kochi": "COK",
+    "Wayanad": "CCJ",    # Calicut International Airport (nearest major airport)
+    "Kerala": "COK",     # Multiple airports, Cochin is a major hub
     "Bangkok": "BKK",
-    "Singapore": "SIN",
+    "Singapore": "SIN"
     # Add more as needed
 }
 
@@ -564,10 +619,15 @@ def city_to_iata(city_name: str) -> str:
     """Convert city name to IATA code using static mapping."""
     return CITY_TO_IATA.get(city_name.strip().title(), "")
 
-def extract_city_from_package_name(package_name: str) -> str:
+def extract_city_from_package_name(package_name: str, package: dict = {}) -> str:
     # Try to match known city names in the package name
     for city in CITY_TO_IATA.keys():
         if city.lower() in package_name.lower():
+            return city
+    # Try destinationName field if available
+    dest_names = package.get("destinationName", "")
+    for city in CITY_TO_IATA.keys():
+        if city.lower() in dest_names.lower():
             return city
     # Fallback: regex for 'in <City>'
     match = re.search(r'in ([A-Za-z ]+)', package_name)
