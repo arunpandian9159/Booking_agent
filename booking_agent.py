@@ -431,18 +431,40 @@ async def get_destinations():
     """Endpoint to get all destinations (extracted from plans)."""
     try:
         plans = await fetch_packages()
-        destinations = []
+        destinations = set()
         for p in plans:
-            dest = p.get("destination") or p.get("to")
-            # If dest is a dict, extract 'name' or 'code'
-            if isinstance(dest, dict):
-                name = dest.get("name") or dest.get("code")
-                if name:
-                    destinations.append(name)
-            elif isinstance(dest, str):
-                destinations.append(dest)
-        return JSONResponse({"destinations": destinations})
+            # Use 'destinationName' which is a comma-separated string of names
+            dest_names = p.get("destinationName")
+            if dest_names:
+                for name in dest_names.split(","):
+                    name = name.strip()
+                    if name:
+                        destinations.add(name)
+        return JSONResponse({"destinations": sorted(destinations)})
     except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.get("/packages")
+async def get_packages(destination: str = ""):
+    """Endpoint to get all packages for a given destination (by destinationName)."""
+    try:
+        packages = await fetch_packages()
+        filtered = []
+        for p in packages:
+            dest_names = p.get("destinationName", "")
+            if dest_names:
+                dest_list = [d.strip() for d in dest_names.split(",") if d.strip()]
+                if destination in dest_list:
+                    filtered.append({
+                        "id": p.get("_id"),
+                        "name": p.get("packageName")
+                    })
+        if filtered:
+            print(f"[DEBUG] First filtered package full object: {next(p for p in packages if p.get('_id') == filtered[0]['id'])}")
+        print(f"[DEBUG] /packages destination={destination!r} filtered={filtered}")
+        return JSONResponse({"packages": filtered})
+    except Exception as e:
+        print(f"[ERROR] /packages exception: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
 
 # =================================
