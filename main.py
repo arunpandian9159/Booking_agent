@@ -4,7 +4,6 @@ from fastapi.responses import FileResponse, JSONResponse
 from business_logic import book_travel
 from packages import fetch_packages
 from langchain_core.messages import SystemMessage, HumanMessage
-import logging
 
 app = FastAPI()
 

@@ -56,7 +56,6 @@ def tripxplo_get_plan_details(plan_name: str):
         )
         response.raise_for_status()
         packages = response.json().get("result", {}).get("docs", [])
-        logger.info(f"[DEBUG] TripXplo API response for plan search '{plan_name}': {packages}")
         plan_name_lower = plan_name.lower()
         for p in packages:
             if p.get("name") and plan_name_lower in p.get("name").lower():
@@ -140,6 +139,21 @@ def get_hotel_id_to_name_mapping():
     global _hotel_id_to_name_cache
     if _hotel_id_to_name_cache is not None:
         return _hotel_id_to_name_cache
+    hotels = fetch_all_hotels()
+    mapping = {}
+    for hotel in hotels:
+        hid = hotel.get("hotelId")
+        name = hotel.get("name")
+        if hid and name:
+            mapping[hid] = name
+    _hotel_id_to_name_cache = mapping
+    logger.info(f"Loaded hotel hotelId to name mapping for {len(mapping)} hotels (from fetch_all_hotels).")
+    return mapping
+
+def fetch_all_hotels():
+    """
+    Fetch all hotel details from the TripXplo API and return as a list of hotel objects.
+    """
     token = get_tripxplo_token()
     try:
         params = {"limit": 1000, "offset": 0}
@@ -150,17 +164,8 @@ def get_hotel_id_to_name_mapping():
         )
         response.raise_for_status()
         data = response.json()
-        logger.info(f"Raw /admin/hotel response: {data}")
-        hotels = data.get("result", [])
-        mapping = {}
-        for hotel in hotels:
-            hid = hotel.get("_id")
-            name = hotel.get("name")
-            if hid and name:
-                mapping[hid] = name
-        _hotel_id_to_name_cache = mapping
-        logger.info(f"Loaded hotel _id to name mapping for {len(mapping)} hotels.")
-        return mapping
+        logger.info(f"Fetched all hotels: {len(data.get('result', []))} found.")
+        return data.get("result", [])
     except Exception as e:
-        logger.error(f"Error fetching all hotels for mapping: {e}")
-        return {} 
+        logger.error(f"Error fetching all hotels: {e}")
+        return [] 

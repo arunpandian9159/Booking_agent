@@ -256,12 +256,23 @@
                 const separator = lines[1];
                 const rows = lines.slice(2);
                 const headers = header.split('|').map(h => h.trim()).filter(Boolean);
+                let hotelNameIdx = headers.findIndex(h => h.toLowerCase() === 'hotel name');
                 let table = '<table style="width:100%;margin:1em 0;border-collapse:collapse;">';
                 table += '<thead><tr>' + headers.map(h => `<th style="border:1px solid #b2dfdb;padding:6px;background:#e0f7fa;">${h}</th>`).join('') + '</tr></thead>';
                 table += '<tbody>';
-                rows.forEach(row => {
-                    const cells = row.split('|').map(c => c.trim()).filter(Boolean);
+                let hotelCounter = 1;
+                rows.forEach((row, rowIdx) => {
+                    let cells = row.split('|').map(c => c.trim());
+                    // Remove empty cells at start/end due to leading/trailing |
+                    if (cells.length && cells[0] === '') cells.shift();
+                    if (cells.length && cells[cells.length-1] === '') cells.pop();
                     if (cells.length) {
+                        // Fallback for missing hotel name
+                        if (hotelNameIdx !== -1 && (!cells[hotelNameIdx] || cells[hotelNameIdx] === '')) {
+                            cells[hotelNameIdx] = `Hotel ${hotelCounter++}`;
+                        } else if (hotelNameIdx !== -1) {
+                            hotelCounter++;
+                        }
                         table += '<tr>' + cells.map(c => `<td style="border:1px solid #b2dfdb;padding:6px;">${c}</td>`).join('') + '</tr>';
                     }
                 });

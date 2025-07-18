@@ -1,4 +1,4 @@
-from tripxplo_api import tripxplo_get_package_by_id, tripxplo_get_destination_by_id, tripxplo_get_hotels
+from tripxplo_api import tripxplo_get_package_by_id, tripxplo_get_destination_by_id, tripxplo_get_hotels, fetch_all_hotels
 from amadeus_api import get_amadeus_access_token
 from utils import city_to_iata, extract_city_from_package_name, EUR_TO_INR
 from config import AMADEUS_CLIENT_ID, AMADEUS_CLIENT_SECRET
@@ -20,7 +20,6 @@ def book_travel(plan: str, customer: str, date: str = "") -> str:
     dep_date_str = dep_date.isoformat()
     ret_date_str = ret_date.isoformat()
     package = tripxplo_get_package_by_id(plan)
-    logger.info(f"[DEBUG] Package data: {package}")
     if not package:
         return f"Package with ID '{plan}' not found."
     plan_actual_name = package.get("packageName") or package.get("name") or plan
@@ -91,6 +90,8 @@ def book_travel(plan: str, customer: str, date: str = "") -> str:
         hotels = extract_hotels_from_package(package)
         if not hotels:
             hotels = tripxplo_get_hotels(plan)
+        # Fetch all hotels for fallback price lookup
+        all_hotels = fetch_all_hotels()
         def get_price(h):
             for k in ["price", "minPrice", "amount"]:
                 v = h.get(k)
@@ -110,17 +111,40 @@ def book_travel(plan: str, customer: str, date: str = "") -> str:
                 room_id = h.get("_id")
                 if room_id:
                     hotel_name = room_id_to_hotel_name.get(room_id, "")
-                    if hotel_name:
-                        logger.info(f"Found hotel name from room/mealPlan mapping: {hotel_name}")
-                    else:
-                        logger.warning(f"No hotel name found in mapping for _id: {room_id}")
             meal_plan = h.get("mealPlan", "")
             nights = h.get("noOfNight", "")
-            rows.append(f"| {hotel_name} | {meal_plan} | {nights} |")
+            # Try to extract room price, adult price, child price from hotelRoomDetails if available
+            room_price = adult_price = child_price = ""
+            room_details = h.get("hotelRoomDetails", [])
+            if room_details and isinstance(room_details, list):
+                first_room = room_details[0]
+                room_price = first_room.get("price", "")
+                adult_price = first_room.get("adultPrice", "")
+                child_price = first_room.get("childPrice", "")
+            else:
+                room_price = h.get("price", "")
+                adult_price = h.get("adultPrice", "")
+                child_price = h.get("childPrice", "")
+            # Fallback: if any price is empty, try to get from fetch_all_hotels
+            if (not room_price or not adult_price or not child_price):
+                # Try to match by hotelId first, then by name
+                fallback_hotel = None
+                if hotel_id:
+                    fallback_hotel = next((fh for fh in all_hotels if str(fh.get("hotelId")) == str(hotel_id)), None)
+                if not fallback_hotel and hotel_name:
+                    fallback_hotel = next((fh for fh in all_hotels if (fh.get("name") or fh.get("hotelName")) == hotel_name), None)
+                if fallback_hotel:
+                    if not room_price:
+                        room_price = fallback_hotel.get("price", "")
+                    if not adult_price:
+                        adult_price = fallback_hotel.get("adultPrice", "")
+                    if not child_price:
+                        child_price = fallback_hotel.get("childPrice", "")
+            rows.append(f"| {hotel_name} | {meal_plan} | {nights} | {room_price} | {adult_price} | {child_price} |")
         if rows:
             hotel_info = (
-                "| Hotel Name | Meal Plan | Nights |\n"
-                "|-----------|-----------|--------|\n" +
+                "| Hotel Name | Meal Plan | Nights | Room Price | Adult Price | Child Price |\n"
+                "|-----------|-----------|--------|------------|------------|------------|\n" +
                 "\n".join(rows)
             )
         else:
@@ -131,10 +155,10 @@ def book_travel(plan: str, customer: str, date: str = "") -> str:
         f"Package: {plan_actual_name}\n"
         f"Status: ✅ Complete\n"
         f"\n"
-        f"✈️ Flight Details (sorted by price, Chennai to {dest})\n"
+        f"✈️ Flight Details (Chennai to {dest})\n"
         f"{flight_info}\n"
         f"\n"
-        f"🏨 Hotel Details (sorted by price)\n"
+        f"🏨 Hotel Details\n"
         f"{hotel_info}\n"
     )
     return result.strip()
