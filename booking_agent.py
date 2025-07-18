@@ -363,14 +363,33 @@ def book_travel(plan: str, customer: str, date: str = "") -> str:
         hotels_sorted = sorted(hotels, key=get_price) if hotels else []
         rows = []
         for h in hotels_sorted:
-            room_id = h.get("hotelRoomId", "")
+            hotel_name = h.get("name") or h.get("hotel") or h.get("hotelName") or ""
+            if not hotel_name:
+                hotel_id = h.get("hotelId")
+                if not hotel_id:
+                    logger.warning(f"HotelId is missing. Full hotel object: {h}")
+                logger.info(f"Hotel name missing, will try to fetch by hotelId: {hotel_id}")
+                if hotel_id and isinstance(hotel_id, str) and len(hotel_id) >= 8:
+                    hotel_details = tripxplo_get_hotel_by_id(hotel_id)
+                    hotel_name = hotel_details.get("name", "")
+                else:
+                    logger.warning(f"hotelId is missing or invalid, skipping fetch: {hotel_id}")
+                    # Fallback: try to get hotel name from _id mapping
+                    room_id = h.get("_id")
+                    if room_id:
+                        hotel_map = get_hotel_id_to_name_mapping()
+                        hotel_name = hotel_map.get(room_id, "")
+                        if hotel_name:
+                            logger.info(f"Found hotel name from _id mapping: {hotel_name}")
+                        else:
+                            logger.warning(f"No hotel name found in mapping for _id: {room_id}")
             meal_plan = h.get("mealPlan", "")
             nights = h.get("noOfNight", "")
-            rows.append(f"| {room_id} | {meal_plan} | {nights} |")
+            rows.append(f"| {hotel_name} | {meal_plan} | {nights} |")
         if rows:
             hotel_info = (
-                "| Hotel Room ID | Meal Plan | Nights |\n"
-                "|---------------|-----------|--------|\n" +
+                "| Hotel Name | Meal Plan | Nights |\n"
+                "|-----------|-----------|--------|\n" +
                 "\n".join(rows)
             )
         else:
@@ -639,7 +658,11 @@ def extract_city_from_package_name(package_name: str, package: dict = {}) -> str
 
 def tripxplo_get_destination_by_id(destination_id: str):
     token = get_tripxplo_token()
+    if not destination_id or not isinstance(destination_id, str) or len(destination_id) < 8:
+        logger.warning(f"Destination ID is missing or invalid: {destination_id}")
+        return {}
     try:
+        logger.info(f"Fetching destination by ID: {destination_id}")
         response = requests.get(
             f"{API_BASE}/admin/destination/{destination_id}",
             headers={"Authorization": f"Bearer {token}"}
@@ -647,7 +670,54 @@ def tripxplo_get_destination_by_id(destination_id: str):
         response.raise_for_status()
         return response.json().get("result", {})
     except Exception as e:
-        logger.error(f"Error fetching destination by ID: {e}")
+        logger.error(f"Error fetching destination by ID {destination_id}: {e}")
+        return {}
+
+# Add function to fetch hotel by ID
+
+def tripxplo_get_hotel_by_id(hotel_id: str):
+    token = get_tripxplo_token()
+    if not hotel_id or not isinstance(hotel_id, str) or len(hotel_id) < 8:
+        logger.warning(f"Hotel ID is missing or invalid: {hotel_id}")
+        return {}
+    try:
+        logger.info(f"Fetching hotel by ID: {hotel_id}")
+        response = requests.get(
+            f"{API_BASE}/admin/hotel/{hotel_id}/getOne",
+            headers={"Authorization": f"Bearer {token}"}
+        )
+        response.raise_for_status()
+        return response.json().get("result", {})
+    except Exception as e:
+        logger.error(f"Error fetching hotel by ID {hotel_id}: {e}")
+        return {}
+
+# --- Hotel name mapping by _id ---
+_hotel_id_to_name_cache = None
+
+def get_hotel_id_to_name_mapping():
+    global _hotel_id_to_name_cache
+    if _hotel_id_to_name_cache is not None:
+        return _hotel_id_to_name_cache
+    token = get_tripxplo_token()
+    try:
+        response = requests.get(
+            f"{API_BASE}/admin/hotel",
+            headers={"Authorization": f"Bearer {token}"}
+        )
+        response.raise_for_status()
+        hotels = response.json().get("result", [])
+        mapping = {}
+        for hotel in hotels:
+            hid = hotel.get("_id")
+            name = hotel.get("name")
+            if hid and name:
+                mapping[hid] = name
+        _hotel_id_to_name_cache = mapping
+        logger.info(f"Loaded hotel _id to name mapping for {len(mapping)} hotels.")
+        return mapping
+    except Exception as e:
+        logger.error(f"Error fetching all hotels for mapping: {e}")
         return {}
 
 if __name__ == "__main__":
