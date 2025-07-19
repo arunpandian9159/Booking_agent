@@ -116,33 +116,22 @@ def book_travel(plan: str, customer: str, date: str = "") -> str:
                     hotel_name = room_id_to_hotel_name.get(room_id, "")
             meal_plan = h.get("mealPlan", "")
             nights = h.get("noOfNight", "")
-            # Try to extract room price, adult price, child price from hotelRoomDetails if available
+            # New logic: Use hotelRoomId/_id to look up price in all_hotels
+            room_id = h.get("hotelRoomId") or h.get("_id")
             room_price = adult_price = child_price = ""
-            room_details = h.get("hotelRoomDetails", [])
-            if room_details and isinstance(room_details, list):
-                first_room = room_details[0]
-                room_price = first_room.get("price", "")
-                adult_price = first_room.get("adultPrice", "")
-                child_price = first_room.get("childPrice", "")
-            else:
-                room_price = h.get("price", "")
-                adult_price = h.get("adultPrice", "")
-                child_price = h.get("childPrice", "")
-            # Fallback: if any price is empty, try to get from fetch_all_hotels
-            if (not room_price or not adult_price or not child_price):
-                # Try to match by hotelId first, then by name
-                fallback_hotel = None
-                if hotel_id:
-                    fallback_hotel = next((fh for fh in all_hotels if str(fh.get("hotelId")) == str(hotel_id)), None)
-                if not fallback_hotel and hotel_name:
-                    fallback_hotel = next((fh for fh in all_hotels if (fh.get("name") or fh.get("hotelName")) == hotel_name), None)
-                if fallback_hotel:
-                    if not room_price:
-                        room_price = fallback_hotel.get("price", "")
-                    if not adult_price:
-                        adult_price = fallback_hotel.get("adultPrice", "")
-                    if not child_price:
-                        child_price = fallback_hotel.get("childPrice", "")
+            fallback_room = None
+            if room_id:
+                fallback_room = next((fh for fh in all_hotels if str(fh.get("_id")) == str(room_id) or str(fh.get("hotelRoomId")) == str(room_id)), None)
+            if fallback_room:
+                room_price = fallback_room.get("price", "")
+                adult_price = fallback_room.get("adultPrice", "")
+                child_price = fallback_room.get("childPrice", "")
+            if not room_price:
+                room_price = "Price not available"
+            if not adult_price:
+                adult_price = "Price not available"
+            if not child_price:
+                child_price = "Price not available"
             rows.append(f"| {hotel_name} | {meal_plan} | {nights} | {room_price} | {adult_price} | {child_price} |")
         if rows:
             hotel_info = (
