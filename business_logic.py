@@ -90,8 +90,11 @@ def book_travel(plan: str, customer: str, date: str = "") -> str:
         hotels = extract_hotels_from_package(package)
         if not hotels:
             hotels = tripxplo_get_hotels(plan)
+        # Debug: Log the hotel data received
+        logger.info(f"Hotels from tripxplo_get_hotels: {hotels}")
         # Fetch all hotels for fallback price lookup
         all_hotels = fetch_all_hotels()
+        logger.info(f"All hotels from fetch_all_hotels: {all_hotels}")
         def get_price(h):
             for k in ["price", "minPrice", "amount"]:
                 v = h.get(k)
