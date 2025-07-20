@@ -3,6 +3,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from business_logic import book_travel
 from packages import fetch_packages
+from hotel_mapper import get_hotel_mapper, map_hotels_by_destination_and_package
 from langchain_core.messages import SystemMessage, HumanMessage
 
 app = FastAPI()
@@ -83,6 +84,75 @@ async def get_packages(destination: str = ""):
                         "name": p.get("packageName")
                     })
         return JSONResponse({"packages": filtered})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.get("/hotels/destinations")
+async def get_available_destinations():
+    """Get all available destination IDs for hotel mapping."""
+    try:
+        mapper = get_hotel_mapper()
+        destinations = mapper.get_available_destinations()
+        return JSONResponse({"destinations": destinations})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.get("/hotels/destination/{destination_id}")
+async def get_hotels_by_destination(destination_id: str):
+    """Get all hotels for a specific destination."""
+    try:
+        mapper = get_hotel_mapper()
+        hotels = mapper.get_hotels_by_destination(destination_id)
+        summary = mapper.get_hotel_summary_by_destination(destination_id)
+        
+        return JSONResponse({
+            "destination_id": destination_id,
+            "summary": summary,
+            "hotels": hotels
+        })
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.get("/hotels/destination/{destination_id}/filter")
+async def get_filtered_hotels(
+    destination_id: str,
+    package_type: str | None = None,
+    room_type: str | None = None,
+    season_type: str | None = None
+):
+    """Get hotels filtered by destination and optional filters."""
+    try:
+        hotels = map_hotels_by_destination_and_package(
+            destination_id=destination_id,
+            package_type=package_type,
+            room_type=room_type,
+            season_type=season_type
+        )
+        
+        return JSONResponse({
+            "destination_id": destination_id,
+            "filters": {
+                "package_type": package_type,
+                "room_type": room_type,
+                "season_type": season_type
+            },
+            "hotels": hotels
+        })
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.get("/hotels/search")
+async def search_hotels(hotel_name: str, destination_id: str | None = None):
+    """Search hotels by name, optionally filtered by destination."""
+    try:
+        mapper = get_hotel_mapper()
+        hotels = mapper.search_hotels_by_name(hotel_name, destination_id)
+        
+        return JSONResponse({
+            "search_term": hotel_name,
+            "destination_id": destination_id,
+            "hotels": hotels
+        })
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 

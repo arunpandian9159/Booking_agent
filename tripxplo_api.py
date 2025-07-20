@@ -151,4 +151,62 @@ def fetch_all_hotels():
         data = response.json()
         return data.get("result", [])
     except Exception as e:
+        return []
+
+def fetch_hotels_by_destination(destination_id: str):
+    """
+    First fetch all hotels, then match hotel names and prices using destination ID.
+    This function will be used for destination-based hotel matching.
+    """
+    if not destination_id or not isinstance(destination_id, str) or len(destination_id) < 8:
+        logger.warning(f"Invalid destination ID: {destination_id}")
+        return []
+    
+    try:
+        # Step 1: Fetch all hotels
+        logger.info(f"Fetching all hotels to match with destination ID: {destination_id}")
+        all_hotels = fetch_all_hotels()
+        logger.info(f"Fetched {len(all_hotels)} total hotels from API")
+        
+        # Step 2: Match hotels by destination ID
+        destination_hotels = []
+        for hotel in all_hotels:
+            hotel_destination = hotel.get("destination")
+            hotel_name = hotel.get("name") or hotel.get("hotelName") or ""
+            hotel_price = hotel.get("price") or hotel.get("minPrice") or hotel.get("amount") or ""
+            
+            # Check if hotel belongs to the specified destination
+            is_destination_match = False
+            if isinstance(hotel_destination, list) and hotel_destination:
+                for dest in hotel_destination:
+                    if dest.get("destinationId") == destination_id:
+                        is_destination_match = True
+                        break
+            elif isinstance(hotel_destination, dict) and hotel_destination.get("destinationId") == destination_id:
+                is_destination_match = True
+            elif isinstance(hotel_destination, str) and hotel_destination == destination_id:
+                is_destination_match = True
+            
+            # If destination matches, add hotel with name and price
+            if is_destination_match:
+                # Ensure hotel has name and price information
+                if hotel_name and hotel_price:
+                    destination_hotels.append({
+                        "name": hotel_name,
+                        "price": hotel_price,
+                        "adultPrice": hotel.get("adultPrice", ""),
+                        "childPrice": hotel.get("childPrice", ""),
+                        "mealPlan": hotel.get("mealPlan", ""),
+                        "noOfNight": hotel.get("noOfNight", ""),
+                        "hotelId": hotel.get("hotelId", ""),
+                        "_id": hotel.get("_id", ""),
+                        "destination": hotel_destination
+                    })
+                    logger.debug(f"Matched hotel: {hotel_name} - Price: {hotel_price}")
+        
+        logger.info(f"Successfully matched {len(destination_hotels)} hotels for destination ID {destination_id}")
+        return destination_hotels
+        
+    except Exception as e:
+        logger.error(f"Error matching hotels by destination {destination_id}: {e}")
         return [] 
